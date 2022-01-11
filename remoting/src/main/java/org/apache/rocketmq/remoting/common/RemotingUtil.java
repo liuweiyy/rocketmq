@@ -190,12 +190,18 @@ public class RemotingUtil {
         SocketChannel sc = null;
         try {
             sc = SocketChannel.open();
+            // 连接之前通道是阻塞的
             sc.configureBlocking(true);
+            // 调用close后不是阻塞等待而是立即关闭连接
             sc.socket().setSoLinger(false, -1);
+            // 关闭Nagle算法
             sc.socket().setTcpNoDelay(true);
+            // 设置接受缓存区大小
             sc.socket().setReceiveBufferSize(1024 * 64);
+            // 设置发送缓存区大小
             sc.socket().setSendBufferSize(1024 * 64);
             sc.socket().connect(remote, timeoutMillis);
+            // 连接之后通道是非阻塞的
             sc.configureBlocking(false);
             return sc;
         } catch (Exception e) {

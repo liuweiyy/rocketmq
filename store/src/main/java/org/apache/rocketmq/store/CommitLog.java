@@ -871,13 +871,16 @@ public class CommitLog {
     }
 
     public CompletableFuture<PutMessageStatus> submitReplicaRequest(AppendMessageResult result, MessageExt messageExt) {
+        // 若是主从同步
         if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {
             HAService service = this.defaultMessageStore.getHaService();
             if (messageExt.isWaitStoreMsgOK()) {
+                //决定是否等待，如果s1ave和Master之间offset差距超过设定值，则不再同步，返回SLAVE_NOT_AVAILABLE
                 if (service.isSlaveOK(result.getWroteBytes() + result.getWroteOffset())) {
                     GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(),
                             this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
                     service.putRequest(request);
+                    // 唤醒的是writeSocketService,它在等待commitLog的追加
                     service.getWaitNotifyObject().wakeupAll();
                     return request.future();
                 }

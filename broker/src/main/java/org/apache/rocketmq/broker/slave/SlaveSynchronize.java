@@ -46,9 +46,13 @@ public class SlaveSynchronize {
     }
 
     public void syncAll() {
+        // 同步 topic 配置信息
         this.syncTopicConfig();
+        // 同步消费者偏移量
         this.syncConsumerOffset();
+        // 同步延迟偏移量
         this.syncDelayOffset();
+        // 同步订阅组配置信息
         this.syncSubscriptionGroupConfig();
     }
 
@@ -56,16 +60,21 @@ public class SlaveSynchronize {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null && !masterAddrBak.equals(brokerController.getBrokerAddr())) {
             try {
+                // 去master中拉取TopicConfig配置信息
                 TopicConfigSerializeWrapper topicWrapper =
                     this.brokerController.getBrokerOuterAPI().getAllTopicConfig(masterAddrBak);
+                // 如果数据的版本号不匹配，更新版本号和数据
                 if (!this.brokerController.getTopicConfigManager().getDataVersion()
                     .equals(topicWrapper.getDataVersion())) {
-
+                    // 更新TopicConfigManager中的版本号
                     this.brokerController.getTopicConfigManager().getDataVersion()
                         .assignNewOne(topicWrapper.getDataVersion());
+                    // 清空TopicConfigManager中的TopicConfigTable信息
                     this.brokerController.getTopicConfigManager().getTopicConfigTable().clear();
+                    // 赋值新的信息
                     this.brokerController.getTopicConfigManager().getTopicConfigTable()
                         .putAll(topicWrapper.getTopicConfigTable());
+                    // 进行持久化
                     this.brokerController.getTopicConfigManager().persist();
 
                     log.info("Update slave topic config from master, {}", masterAddrBak);
