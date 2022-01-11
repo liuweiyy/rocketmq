@@ -25,13 +25,13 @@ import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 
 public class EndTransactionRequestHeader implements CommandCustomHeader {
     @CFNotNull
-    private String producerGroup;
+    private String producerGroup;//发送broker前赋值	producerGroupname
     @CFNotNull
-    private Long tranStateTableOffset;
+    private Long tranStateTableOffset;//发送broker前赋值	prepare消息在consumequeue的位置（表示该消息在cq上是第几条消息）
     @CFNotNull
-    private Long commitLogOffset;
+    private Long commitLogOffset;//发送broker前赋值  prepare消息在commitlog的绝对位置
     @CFNotNull
-    private Integer commitOrRollback; // TRANSACTION_COMMIT_TYPE
+    private Integer commitOrRollback; // TRANSACTION_COMMIT_TYPE 发送broker前赋值 为对应的消息类型commit/rollback/unknow
     // TRANSACTION_ROLLBACK_TYPE
     // TRANSACTION_NOT_TYPE
 
@@ -39,9 +39,9 @@ public class EndTransactionRequestHeader implements CommandCustomHeader {
     private Boolean fromTransactionCheck = false;
 
     @CFNotNull
-    private String msgId;
+    private String msgId;//发送broker前赋值消息属性的UNIQ_KEY
 
-    private String transactionId;
+    private String transactionId;//发送broker前赋值 事务id，通常是消息属性的UNIQ_KEY
 
     @Override
     public void checkFields() throws RemotingCommandException {

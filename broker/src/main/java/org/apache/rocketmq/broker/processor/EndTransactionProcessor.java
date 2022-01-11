@@ -50,10 +50,25 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         this.brokerController = brokerController;
     }
 
+    /**
+     * commit消息=>从commitLog读取出prepare消息=>检查prepare消息=>转换为真正待消费消息=>追加到commitLog文件=>删除prepare消息=>ReputMessageService把待消费消息转储到consumeQueue=>客户端消费事务消息。
+     * rollback消息=>从commitLog读取出prepare消息=>检查prepare消息=>删除prepare消息。
+     * 该方法的核心就是根据EndTransactionRequestHeader上送的commitLogPhysOffset找到prepare消息，然后还原消息保存到commitLog内，也很容易理解。
+     */
     @Override
     public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws
         RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
+        /*
+         *	该requestHeader包含了
+         *	producerGroup==producerGroupName，
+         *	tranStateTableOffset==prepare消息在consumeQueue的位置（表示该消息在cq上是第几条消息）， （用于把原始的事务消息保存到consumeQueue上，即保存在prepare消息在consumeQueue的位置）
+         *	commitLogOffset==prepare消息在commitLog的绝对位置，（用于查找在commitLog上的commitLogOffset位置的prepare消息，把prepare消息转换为原始消息，继而最后保存到commitLog上）
+         *	commitOrRollback==事务消息类型TRANSACTION_COMMIT_TYPE/TRANSACTION_ROLLBACK_TYPE/TRANSACTION_NOT_TYPE，
+         *	transactionId==消息的 UNIQ_KEY
+         *	msgId==消息的UNIQ_KEY
+         *	fromTransactionCheck是否是broker回查事务，true是，false否
+         */
         final EndTransactionRequestHeader requestHeader =
             (EndTransactionRequestHeader)request.decodeCommandCustomHeader(EndTransactionRequestHeader.class);
         LOGGER.debug("Transaction request:{}", requestHeader);
@@ -62,8 +77,12 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
             LOGGER.warn("Message store is slave mode, so end transaction is forbidden. ");
             return response;
         }
-
+        //1.Producer执行完本地事务后立即发来END_TRANSACTION请求
+        //2.Broker发送回查后，Producer检查本地事务状态后，发来END_TRANSACTION请求
+        //这里二者逻辑的区别也仅仅是日志记录不同。
         if (requestHeader.getFromTransactionCheck()) {
+            //表示是否是回查检查消息。用于broker发producer消息回查事务，producer结束事务发送到broker的时候，该值为true。对于producer发送prepare消息后执行完本地事务，发送commit/rollback消息到broker的时候，该值为false。
+            //回查事务和非回查，执行功能是一样的
             switch (requestHeader.getCommitOrRollback()) {
                 case MessageSysFlag.TRANSACTION_NOT_TYPE: {
                     LOGGER.warn("Check producer[{}] transaction state, but it's pending status."
@@ -97,7 +116,7 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
             }
         } else {
             switch (requestHeader.getCommitOrRollback()) {
-                case MessageSysFlag.TRANSACTION_NOT_TYPE: {
+                case MessageSysFlag.TRANSACTION_NOT_TYPE: {//对应事务状态的UNKNOW，不处理
                     LOGGER.warn("The producer[{}] end transaction in sending message,  and it's pending status."
                             + "RequestHeader: {} Remark: {}",
                         RemotingHelper.parseChannelRemoteAddr(ctx.channel()),
@@ -106,11 +125,11 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                     return null;
                 }
 
-                case MessageSysFlag.TRANSACTION_COMMIT_TYPE: {
+                case MessageSysFlag.TRANSACTION_COMMIT_TYPE: {//事务commit消息，处理
                     break;
                 }
 
-                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE: {
+                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE: {//事务rollback消息，处理
                     LOGGER.warn("The producer[{}] end transaction in sending message, rollback the message."
                             + "RequestHeader: {} Remark: {}",
                         RemotingHelper.parseChannelRemoteAddr(ctx.channel()),
@@ -124,18 +143,27 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         }
         OperationResult result = new OperationResult();
         if (MessageSysFlag.TRANSACTION_COMMIT_TYPE == requestHeader.getCommitOrRollback()) {
-            result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);
-            if (result.getResponseCode() == ResponseCode.SUCCESS) {
+            //commitMessage提交消恳。真实的逻辑是根据传过来的commitLogOffset从CommitLog获取half消息
+            //事务commit消息，则直接将原先发的prepare从commitLog文件读出来消息转换为原消息，并写入commitLog，消息的topic是原topic，即被消费者订阅可以消费到
+            result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);//根据EndTransactionRequestHeader.commitLogOffset这个commitlog物理偏移量从commitlog中查找到prepare消息
+            if (result.getResponseCode() == ResponseCode.SUCCESS) {//从commitlog中查找到了prepare消息
+                //检查合法性: i.half消息的PGROUP、queueOffset、commitLogOffset和请求头的相应值相同。
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
                 if (res.getCode() == ResponseCode.SUCCESS) {
-                    MessageExtBrokerInner msgInner = endMessageTransaction(result.getPrepareMessage());
-                    msgInner.setSysFlag(MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), requestHeader.getCommitOrRollback()));
-                    msgInner.setQueueOffset(requestHeader.getTranStateTableOffset());
-                    msgInner.setPreparedTransactionOffset(requestHeader.getCommitLogOffset());
-                    msgInner.setStoreTimestamp(result.getPrepareMessage().getStoreTimestamp());
+                    MessageExtBrokerInner msgInner = endMessageTransaction(result.getPrepareMessage());// 还原half message真实的topic、queueId
+                    msgInner.setSysFlag(MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), requestHeader.getCommitOrRollback()));// sysFlag没置为TRANSACTION_COMMIT_TYPE
+                    msgInner.setQueueOffset(requestHeader.getTranStateTableOffset());//设置原始消息在consumequeue的offset，即保存到prepare消息在consumequeue上的位置。
+                    msgInner.setPreparedTransactionOffset(requestHeader.getCommitLogOffset());//prepare消息在commitlog的绝对（物理）位置，即commitlog格式中的PTO
+                    msgInner.setStoreTimestamp(result.getPrepareMessage().getStoreTimestamp());//原始消息的存储时间戳为prepare消息存储时间戳
                     MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_TRANSACTION_PREPARED);
-                    RemotingCommand sendResult = sendFinalMessage(msgInner);
-                    if (sendResult.getCode() == ResponseCode.SUCCESS) {
+                    // 将还原后的消息重新落盘，随后就会调用CommitLogDispatcherBuildConsumeQueue.dispatch更新原始Topic的ConsumerQueue
+                    // 该消息对消费者可见。
+                    RemotingCommand sendResult = sendFinalMessage(msgInner);//把原始消息写入到commitlog
+                    if (sendResult.getCode() == ResponseCode.SUCCESS) {//原始消息写入commitlog成功，从commitlog删除prepare消息
+                        // 删除half消息(并非从磁盘真正删除)。
+                        // 具体逻辑是构建一个消息放入RMQ_SYS_TRANS_OP_HALF_TOPIC队列，queueId为对应half消息queueId
+                        // 消息内容为对应half消息的queueOffset，并将TAGS属性设置"d"。
+                        // 所谓删除prepare消息就是把该消息写入到commitlog，topic是op half topic，这样broker回查的时候判断OP HALF有了该消息，就不再进行回查
                         this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                     }
                     return sendResult;
@@ -143,10 +171,13 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                 return res;
             }
         } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) {
+            //rollbackMessage,真实逻辑和commitMessage一样。真实的逻辑是根据传过来的commitLogOffset从CommitLog获取half消息
+            //如果是Rollback，则直接将消息转换为原消息，并写入到Op Topic里
             result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
                 if (res.getCode() == ResponseCode.SUCCESS) {
+                    // 删除half消息，具体逻辑是将消息放入RMQ_SYS_TRANS_OP_HALF_TOPIC队列，消息内容为对应half消息的queueOffset，并将TAGS属性设置"d"。
                     this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                 }
                 return res;
@@ -154,7 +185,7 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         }
         response.setCode(result.getResponseCode());
         response.setRemark(result.getResponseRemark());
-        return response;
+        return response;//设置返回结果，实际producer是oneway发送方式，不返回producer
     }
 
     @Override
