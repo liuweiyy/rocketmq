@@ -36,6 +36,10 @@ public class NettyDecoder extends LengthFieldBasedFrameDecoder {
         super(FRAME_MAX_LENGTH, 0, 4, 0, 4);
     }
 
+    /**
+     * 解码器，根据长度字段解析数据包，解决拆包粘包问题，格式协议见rocketmq_design_4
+     * 先去掉length（数据包总长度）字段，再解析header length、header、body
+     */
     @Override
     public Object decode(ChannelHandlerContext ctx, ByteBuf in) throws Exception {
         ByteBuf frame = null;
