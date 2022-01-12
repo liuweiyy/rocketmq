@@ -59,6 +59,7 @@ public class ResponseFuture {
 
     public void executeInvokeCallback() {
         if (invokeCallback != null) {
+            //  保证callback只执行一次
             if (this.executeCallbackOnlyOnce.compareAndSet(false, true)) {
                 invokeCallback.operationComplete(this);
             }

@@ -304,6 +304,7 @@ public abstract class NettyRemotingAbstract {
                 // 异步发送模式
                 executeInvokeCallback(responseFuture);
             } else {
+                // 同步发送模式
                 responseFuture.putResponse(cmd);
                 responseFuture.release();
             }
@@ -325,6 +326,7 @@ public abstract class NettyRemotingAbstract {
                     @Override
                     public void run() {
                         try {
+                            // 进行回调函数的调用
                             responseFuture.executeInvokeCallback();
                         } catch (Throwable e) {
                             log.warn("execute callback in executor exception, and callback throw", e);
@@ -334,7 +336,7 @@ public abstract class NettyRemotingAbstract {
                     }
                 });
             } catch (Exception e) {
-                // 进行兜底
+                // 进行兜底 在当前线程执行
                 runInThisThread = true;
                 log.warn("execute callback in executor exception, maybe executor busy", e);
             }
@@ -461,6 +463,7 @@ public abstract class NettyRemotingAbstract {
         throws InterruptedException, RemotingTooMuchRequestException, RemotingTimeoutException, RemotingSendRequestException {
         long beginStartTime = System.currentTimeMillis();
         final int opaque = request.getOpaque();
+        // 对于并发的控制，默认65535
         boolean acquired = this.semaphoreAsync.tryAcquire(timeoutMillis, TimeUnit.MILLISECONDS);
         if (acquired) {
             final SemaphoreReleaseOnlyOnce once = new SemaphoreReleaseOnlyOnce(this.semaphoreAsync);
@@ -473,6 +476,8 @@ public abstract class NettyRemotingAbstract {
             final ResponseFuture responseFuture = new ResponseFuture(channel, opaque, timeoutMillis - costTime, invokeCallback, once);
             this.responseTable.put(opaque, responseFuture);
             try {
+                // 和同步的区别是：只是writeAndFlush，并没有进行等待
+                // 同步操作其实是对异步操作的等待
                 channel.writeAndFlush(request).addListener(new ChannelFutureListener() {
                     @Override
                     public void operationComplete(ChannelFuture f) throws Exception {
@@ -480,6 +485,7 @@ public abstract class NettyRemotingAbstract {
                             responseFuture.setSendRequestOK(true);
                             return;
                         }
+                        // 请求发送失败 回调InvokeCallback
                         requestFail(opaque);
                         log.warn("send a request command to channel <{}> failed.", RemotingHelper.parseChannelRemoteAddr(channel));
                     }
