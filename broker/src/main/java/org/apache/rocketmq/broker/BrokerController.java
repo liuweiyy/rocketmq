@@ -232,10 +232,10 @@ public class BrokerController {
     }
 
     public boolean initialize() throws CloneNotSupportedException {
-        boolean result = this.topicConfigManager.load();
+        boolean result = this.topicConfigManager.load();//加载 topics.json
 
-        result = result && this.consumerOffsetManager.load();
-        result = result && this.subscriptionGroupManager.load();
+        result = result && this.consumerOffsetManager.load(); //加载 consumerOffset.json
+        result = result && this.subscriptionGroupManager.load();//加载 subscriptionGroup.json
         result = result && this.consumerFilterManager.load();
 
         if (result) {
@@ -257,7 +257,7 @@ public class BrokerController {
                 log.error("Failed to initialize", e);
             }
         }
-
+        // 加载Schedule ConsumeQueue,CommitLog,ConsumeQueue
         result = result && this.messageStore.load();
 
         if (result) {
@@ -328,7 +328,7 @@ public class BrokerController {
             this.consumerManageExecutor =
                 Executors.newFixedThreadPool(this.brokerConfig.getConsumerManageThreadPoolNums(), new ThreadFactoryImpl(
                     "ConsumerManageThread_"));
-
+            //注册请求处理器
             this.registerProcessor();
 
             final long initialDelay = UtilAll.computeNextMorningTimeMillis() - System.currentTimeMillis();
@@ -344,6 +344,7 @@ public class BrokerController {
                 }
             }, initialDelay, period, TimeUnit.MILLISECONDS);
 
+            // 每隔5S持久化消费进度,将 ConsumerOffsetManager#offsetTable 属性序列化到consumerOffset.json 文件
             this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
                 @Override
                 public void run() {
@@ -885,6 +886,7 @@ public class BrokerController {
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
             startProcessorByHa(messageStoreConfig.getBrokerRole());
             handleSlaveSynchronize(messageStoreConfig.getBrokerRole());
+            //  注册broker信息,向nameServer发送心跳包
             this.registerBrokerAll(true, false, true);
         }
 
@@ -893,6 +895,7 @@ public class BrokerController {
             @Override
             public void run() {
                 try {
+                    //  30s汇报broker信息
                     BrokerController.this.registerBrokerAll(true, false, brokerConfig.isForceRegister());
                 } catch (Throwable e) {
                     log.error("registerBrokerAll Exception", e);

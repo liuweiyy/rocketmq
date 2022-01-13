@@ -50,10 +50,25 @@ public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    /**
+     * topic与队列数据数组Map   一个 topic可以对应多个Broker  根据路由表进行负载均衡
+     */
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
+    /**
+     * broker名与broker数据Map  一个broker名下可以有多台机器
+     */
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
+    /**
+     * 集群与broker集合Map   集群名字：集群中每一个节点名字
+     */
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+    /**
+     *  broker存活map
+     */
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
+    /**
+     * broker地址与filtersrv数组Map  用于类消息过滤
+     */
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
     public RouteInfoManager() {
@@ -100,6 +115,21 @@ public class RouteInfoManager {
         return topicList.encode();
     }
 
+    /**
+     * broker 注册
+     *
+     * @param clusterName        集群名
+     * @param brokerAddr         broker地址
+     * @param brokerName         broker名
+     * @param brokerId           broker角色编号
+     * @param haServerAddr
+     * @param topicConfigWrapper topic配置数组
+     * @param filterServerList   filtersrv数组
+     * @param channel            连接channel
+     * @return broker注册结果。
+     * 当 broker 为主节点时：不返回 haServerAddr、masterAddr
+     * 当 broker 为从节点时：返回 haServerAddr、masterAddr
+     */
     public RegisterBrokerResult registerBroker(
         final String clusterName,
         final String brokerAddr,
@@ -112,6 +142,7 @@ public class RouteInfoManager {
         RegisterBrokerResult result = new RegisterBrokerResult();
         try {
             try {
+                // 申请写锁
                 this.lock.writeLock().lockInterruptibly();
 
                 Set<String> brokerNames = this.clusterAddrTable.get(clusterName);
@@ -143,20 +174,24 @@ public class RouteInfoManager {
                 String oldAddr = brokerData.getBrokerAddrs().put(brokerId, brokerAddr);
                 registerFirst = registerFirst || (null == oldAddr);
 
+                // 当注册Master && 有Topic配置时,更新topic信息
                 if (null != topicConfigWrapper
                     && MixAll.MASTER_ID == brokerId) {
+                    // 当这次的心跳是Master发送的, 且Topic配置信息有变化 || Master的第一次心跳
                     if (this.isBrokerTopicConfigChanged(brokerAddr, topicConfigWrapper.getDataVersion())
                         || registerFirst) {
                         ConcurrentMap<String, TopicConfig> tcTable =
                             topicConfigWrapper.getTopicConfigTable();
                         if (tcTable != null) {
                             for (Map.Entry<String, TopicConfig> entry : tcTable.entrySet()) {
+                                // 只有Master相关的注册才会创建QueueData
                                 this.createAndUpdateQueueData(brokerName, entry.getValue());
                             }
                         }
                     }
                 }
 
+                // 更新broker连接信息
                 BrokerLiveInfo prevBrokerLiveInfo = this.brokerLiveTable.put(brokerAddr,
                     new BrokerLiveInfo(
                         System.currentTimeMillis(),
@@ -167,6 +202,7 @@ public class RouteInfoManager {
                     log.info("new broker registered, {} HAServer: {}", brokerAddr, haServerAddr);
                 }
 
+                // 更新filtersrv信息
                 if (filterServerList != null) {
                     if (filterServerList.isEmpty()) {
                         this.filterServerTable.remove(brokerAddr);
@@ -175,9 +211,11 @@ public class RouteInfoManager {
                     }
                 }
 
+                // 当注册Slave时,返回Master的addr作为高可用的地址
                 if (MixAll.MASTER_ID != brokerId) {
                     String masterAddr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
                     if (masterAddr != null) {
+                        // 获取master的brokerLiveInfo,将其haServerAddr(addr)赋值给Slave的haServerAddr
                         BrokerLiveInfo brokerLiveInfo = this.brokerLiveTable.get(masterAddr);
                         if (brokerLiveInfo != null) {
                             result.setHaServerAddr(brokerLiveInfo.getHaServerAddr());
@@ -215,6 +253,14 @@ public class RouteInfoManager {
         }
     }
 
+    /**
+     * 创建topic的QueueData,将其加入到{@link #topicQueueTable}中
+     * 在注册Broker的Master || 更新Topic配置  时触发,这样Producer和Consumer就能获取到可用的QueueData
+     * 更新 topic 队列信息
+     *
+     * @param brokerName  broker名
+     * @param topicConfig topic配置
+     */
     private void createAndUpdateQueueData(final String brokerName, final TopicConfig topicConfig) {
         QueueData queueData = new QueueData();
         queueData.setBrokerName(brokerName);
@@ -236,7 +282,7 @@ public class RouteInfoManager {
             while (it.hasNext()) {
                 QueueData qd = it.next();
                 if (qd.getBrokerName().equals(brokerName)) {
-                    if (qd.equals(queueData)) {
+                    if (qd.equals(queueData)) { //原始QueueData是否和新建的一样
                         addNewOne = false;
                     } else {
                         log.info("topic changed, {} OLD: {} NEW: {}", topicConfig.getTopicName(), qd,
@@ -439,11 +485,15 @@ public class RouteInfoManager {
         return null;
     }
 
+    /**
+     * 每10S扫描一次Broker,当超过120s未更新心跳时间,则关闭连接
+     */
     public void scanNotActiveBroker() {
         Iterator<Entry<String, BrokerLiveInfo>> it = this.brokerLiveTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<String, BrokerLiveInfo> next = it.next();
             long last = next.getValue().getLastUpdateTimestamp();
+            // 120s未接收到心跳包
             if ((last + BROKER_CHANNEL_EXPIRED_TIME) < System.currentTimeMillis()) {
                 RemotingUtil.closeChannel(next.getValue().getChannel());
                 it.remove();
@@ -486,6 +536,7 @@ public class RouteInfoManager {
 
             try {
                 try {
+                    // 通道关闭的时候移除
                     this.lock.writeLock().lockInterruptibly();
                     this.brokerLiveTable.remove(brokerAddrFound);
                     this.filterServerTable.remove(brokerAddrFound);

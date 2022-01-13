@@ -122,13 +122,14 @@ public class BrokerStartup {
             }
 
             if (commandLine.hasOption('c')) {
+                // 解析配置文件填充配置类
                 String file = commandLine.getOptionValue('c');
                 if (file != null) {
                     configFile = file;
                     InputStream in = new BufferedInputStream(new FileInputStream(file));
                     properties = new Properties();
                     properties.load(in);
-
+                    //将"-c"指定的配置文件注入到Broker配置中
                     properties2SystemEnv(properties);
                     MixAll.properties2Object(properties, brokerConfig);
                     MixAll.properties2Object(properties, nettyServerConfig);
