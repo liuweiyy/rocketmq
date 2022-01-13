@@ -362,6 +362,7 @@ public class CommitLog {
                 }
 
                 // Timing message processing
+                // 延时消息处理
                 {
                     String t = propertiesMap.get(MessageConst.PROPERTY_DELAY_TIME_LEVEL);
                     if (TopicValidator.RMQ_SYS_SCHEDULE_TOPIC.equals(topic) && t != null) {
@@ -372,6 +373,8 @@ public class CommitLog {
                         }
 
                         if (delayLevel > 0) {
+                            // 当是延时消息时，ConsumeQueue里的tagsCode存储延迟投递时间
+                            // tagsCode存放：当前时间+延时等级对应时间
                             tagsCode = this.defaultMessageStore.getScheduleMessageService().computeDeliverTimestamp(delayLevel,
                                 storeTimestamp);
                         }
@@ -587,6 +590,7 @@ public class CommitLog {
     }
 
     public CompletableFuture<PutMessageResult> asyncPutMessage(final MessageExtBrokerInner msg) {
+        // 继续构选broker内部生成的Message
         // Set the storage time
         msg.setStoreTimestamp(System.currentTimeMillis());
         // Set the message body BODY CRC (consider the most appropriate setting
@@ -594,25 +598,29 @@ public class CommitLog {
         msg.setBodyCRC(UtilAll.crc32(msg.getBody()));
         // Back to Results
         AppendMessageResult result = null;
-
+        //存储耗时相关的Metric: 可以收集这些指标，上报给监控系统
         StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();
 
         String topic = msg.getTopic();
         int queueId = msg.getQueueId();
-
+        // 处理延时消息（定时消息）
         final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
+        // 延时消息处理,非事务消息或事务的commit消息
+        // 事务的 TRANSACTION_PREPARED_TYPE和TRANSACTION_ROLLBACK_TYPE 消息不支持延时投递
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
                 || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
+            // 延时队列的替换
             if (msg.getDelayTimeLevel() > 0) {
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
-
+                // 延时消息替换topic和queueId
+                // 存储消息时，延时消息进入 `Topic` 为 `SCHEDULE_TOPIC_XXXX` 。
                 topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;
+                // 消息队列编号与延迟级别做固定映射 queueId = delayLevel - 1
                 queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
-
-                // Backup real topic, queueId
+                // 备份真实的topic和queueId
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
                 MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
                 msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));

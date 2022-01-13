@@ -1905,6 +1905,11 @@ public class DefaultMessageStore implements MessageStore {
         }
     }
 
+    /**
+     * 重放消息线程服务
+     * 该服务不断生成 消息位置信息 到 消费队列(ConsumeQueue)
+     * 该服务不断生成 消息索引 到 索引文件(IndexFile)
+     */
     class ReputMessageService extends ServiceThread {
 
         private volatile long reputFromOffset = 0;
@@ -1961,6 +1966,7 @@ public class DefaultMessageStore implements MessageStore {
                         this.reputFromOffset = result.getStartOffset();
 
                         for (int readSize = 0; readSize < result.getSize() && doNext; ) {
+                            // checkMessageAndReturnSize中延时消息会替换TagsCode
                             DispatchRequest dispatchRequest =
                                 DefaultMessageStore.this.commitLog.checkMessageAndReturnSize(result.getByteBuffer(), false, false);
                             int size = dispatchRequest.getBufferSize() == -1 ? dispatchRequest.getMsgSize() : dispatchRequest.getBufferSize();

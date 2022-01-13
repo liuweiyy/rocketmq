@@ -123,10 +123,11 @@ public class ScheduleMessageService extends ConfigManager {
                 }
 
                 if (timeDelay != null) {
+                    // 每个level都初始化一个DeliverDelayedMessageTimerTask
                     this.timer.schedule(new DeliverDelayedMessageTimerTask(level, offset), FIRST_DELAY_TIME);
                 }
             }
-
+            // 每10秒对offsetTable进行持久化，以json的方式 delayOffset.json
             this.timer.scheduleAtFixedRate(new TimerTask() {
 
                 @Override
@@ -284,11 +285,17 @@ public class ScheduleMessageService extends ConfigManager {
             }
         }
 
+
         /**
-         * @return
+         * 纠正可投递时间。
+         * 因为发送级别对应的发送间隔可以调整，如果超过当前间隔，则修正成当前配置，避免后面的消息无法发送。
+         *
+         * @param now              当前时间
+         * @param deliverTimestamp 投递时间
+         * @return 纠正结果
          */
         private long correctDeliverTimestamp(final long now, final long deliverTimestamp) {
-
+            // 如果已经超过deliver时间，则返回now
             long result = deliverTimestamp;
 
             long maxTimestamp = now + ScheduleMessageService.this.delayLevelTable.get(this.delayLevel);
@@ -300,6 +307,7 @@ public class ScheduleMessageService extends ConfigManager {
         }
 
         public void executeOnTimeup() {
+            // 延时消息当前level的ConsumeQueue
             ConsumeQueue cq =
                 ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(TopicValidator.RMQ_SYS_SCHEDULE_TOPIC,
                     delayLevel2QueueId(delayLevel));
@@ -331,25 +339,30 @@ public class ScheduleMessageService extends ConfigManager {
                             }
 
                             long now = System.currentTimeMillis();
+                            // 重试消息ConsumeQueue的tagsCode存储重投递时间
+                            // 计算消息应该被消费的时间
                             long deliverTimestamp = this.correctDeliverTimestamp(now, tagsCode);
 
                             nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
 
                             long countdown = deliverTimestamp - now;
-
+                            // 时间超过了，需要立即被调度
                             if (countdown <= 0) {
+                                // 2号消息（对1号消息做了部分修改）
                                 MessageExt msgExt =
                                     ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(
                                         offsetPy, sizePy);
 
                                 if (msgExt != null) {
                                     try {
+                                        // 构建新消息（3号消息） 把之前隐藏的topic释放出来
                                         MessageExtBrokerInner msgInner = this.messageTimeup(msgExt);
                                         if (TopicValidator.RMQ_SYS_TRANS_HALF_TOPIC.equals(msgInner.getTopic())) {
                                             log.error("[BUG] the real topic of schedule msg is {}, discard the msg. msg={}",
                                                 msgInner.getTopic(), msgInner);
                                             continue;
                                         }
+                                        // 进行写消息
                                         PutMessageResult putMessageResult =
                                             ScheduleMessageService.this.writeMessageStore
                                                 .putMessage(msgInner);
@@ -366,12 +379,15 @@ public class ScheduleMessageService extends ConfigManager {
                                                     putMessageResult.getAppendMessageResult().getWroteBytes());
                                                 ScheduleMessageService.this.defaultMessageStore.getBrokerStatsManager().incBrokerPutNums(putMessageResult.getAppendMessageResult().getMsgNum());
                                             }
+                                            // 继续执行下一个20字节
                                             continue;
                                         } else {
+                                            // 发送失败
                                             // XXX: warn and notify me
                                             log.error(
                                                 "ScheduleMessageService, a message time up, but reput it failed, topic: {} msgId {}",
                                                 msgExt.getTopic(), msgExt.getMsgId());
+                                            // 安排下一次任务 中断当前调度 隔一段时间再做调度
                                             ScheduleMessageService.this.timer.schedule(
                                                 new DeliverDelayedMessageTimerTask(this.delayLevel,
                                                     nextOffset), DELAY_FOR_A_PERIOD);
@@ -388,6 +404,7 @@ public class ScheduleMessageService extends ConfigManager {
                                     }
                                 }
                             } else {
+                                // 用countdown去做延时安排下一次任务
                                 ScheduleMessageService.this.timer.schedule(
                                     new DeliverDelayedMessageTimerTask(this.delayLevel, nextOffset),
                                     countdown);
@@ -397,6 +414,7 @@ public class ScheduleMessageService extends ConfigManager {
                         } // end of for
 
                         nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
+                        // 安排下一次任务
                         ScheduleMessageService.this.timer.schedule(new DeliverDelayedMessageTimerTask(
                             this.delayLevel, nextOffset), DELAY_FOR_A_WHILE);
                         ScheduleMessageService.this.updateOffset(this.delayLevel, nextOffset);
@@ -407,7 +425,7 @@ public class ScheduleMessageService extends ConfigManager {
                     }
                 } // end of if (bufferCQ != null)
                 else {
-
+                    // 消费队列已经被删除部分，跳转到最小的消费进度
                     long cqMinOffset = cq.getMinOffsetInQueue();
                     long cqMaxOffset = cq.getMaxOffsetInQueue();
                     if (offset < cqMinOffset) {
@@ -423,7 +441,7 @@ public class ScheduleMessageService extends ConfigManager {
                     }
                 }
             } // end of if (cq != null)
-
+            // 没有定时消息时，调度间隔很短，检查定时消息
             ScheduleMessageService.this.timer.schedule(new DeliverDelayedMessageTimerTask(this.delayLevel,
                 failScheduleOffset), DELAY_FOR_A_WHILE);
         }
