@@ -55,6 +55,9 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
     public void load() {
     }
 
+    /**
+     *放到缓存中，通过定时进行上报
+     */
     @Override
     public void updateOffset(MessageQueue mq, long offset, boolean increaseOnly) {
         if (mq != null) {

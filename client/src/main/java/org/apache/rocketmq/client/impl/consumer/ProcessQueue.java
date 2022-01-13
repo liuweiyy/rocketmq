@@ -182,6 +182,12 @@ public class ProcessQueue {
         return 0;
     }
 
+    /**
+     * 移除消息，并返回第一条消息队列位置
+     *
+     * @param msgs 消息
+     * @return 消息队列位置
+     */
     public long removeMessage(final List<MessageExt> msgs) {
         long result = -1;
         final long now = System.currentTimeMillis();
@@ -190,7 +196,9 @@ public class ProcessQueue {
             this.lastConsumeTimestamp = now;
             try {
                 if (!msgTreeMap.isEmpty()) {
+                    // 这里+1的原因是：如果msgTreeMap为空时，下一条获得的消息位置为queueOffsetMax+1
                     result = this.queueOffsetMax + 1;
+                    // 移除消息
                     int removedCnt = 0;
                     for (MessageExt msg : msgs) {
                         MessageExt prev = msgTreeMap.remove(msg.getQueueOffset());
@@ -199,9 +207,11 @@ public class ProcessQueue {
                             msgSize.addAndGet(0 - msg.getBody().length);
                         }
                     }
+                    // 删除消息时减小msgCount大小
                     msgCount.addAndGet(removedCnt);
 
                     if (!msgTreeMap.isEmpty()) {
+                        // 删完了，还不为空，返回第一条消息队列位置
                         result = msgTreeMap.firstKey();
                     }
                 }
