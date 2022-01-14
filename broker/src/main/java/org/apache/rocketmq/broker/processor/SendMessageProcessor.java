@@ -92,6 +92,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             case RequestCode.CONSUMER_SEND_MSG_BACK:
                 return this.asyncConsumerSendMsgBack(ctx, request);
             default:
+                // 发送消息的处理
                 SendMessageRequestHeader requestHeader = parseRequestHeader(request);
                 if (requestHeader == null) {
                     return CompletableFuture.completedFuture(null);
@@ -291,6 +292,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setTopic(requestHeader.getTopic());
         msgInner.setQueueId(queueIdInt);
 
+        // 死信队列 消费重试超过一定次数
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
             return CompletableFuture.completedFuture(response);
         }
