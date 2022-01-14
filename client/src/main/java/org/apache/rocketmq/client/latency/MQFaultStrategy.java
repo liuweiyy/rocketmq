@@ -75,6 +75,8 @@ public class MQFaultStrategy {
                     if (pos < 0)
                         pos = 0;
                     MessageQueue mq = tpInfo.getMessageQueueList().get(pos);
+                    // 往broker发送消息失败后，一段时间内broker不在恢复
+                    // 高可用设计
                     if (latencyFaultTolerance.isAvailable(mq.getBrokerName()))
                         return mq;
                 }
@@ -103,6 +105,7 @@ public class MQFaultStrategy {
 
     public void updateFaultItem(final String brokerName, final long currentLatency, boolean isolation) {
         if (this.sendLatencyFaultEnable) {
+            // 不可用的时间间隔
             long duration = computeNotAvailableDuration(isolation ? 30000 : currentLatency);
             this.latencyFaultTolerance.updateFaultItem(brokerName, currentLatency, duration);
         }

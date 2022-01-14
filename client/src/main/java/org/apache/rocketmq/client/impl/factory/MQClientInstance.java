@@ -229,6 +229,7 @@ public class MQClientInstance {
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
                     if (null == this.clientConfig.getNamesrvAddr()) {
+                        // nameServer可以通过url动态的发现
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
@@ -285,6 +286,7 @@ public class MQClientInstance {
             public void run() {
                 try {
                     MQClientInstance.this.cleanOfflineBroker();
+                    // 发送心跳
                     MQClientInstance.this.sendHeartbeatToAllBrokerWithLock();
                 } catch (Exception e) {
                     log.error("ScheduledTask sendHeartbeatToAllBroker exception", e);
@@ -297,6 +299,7 @@ public class MQClientInstance {
             @Override
             public void run() {
                 try {
+                    // 持久化消费进度
                     MQClientInstance.this.persistAllConsumerOffset();
                 } catch (Exception e) {
                     log.error("ScheduledTask persistAllConsumerOffset exception", e);

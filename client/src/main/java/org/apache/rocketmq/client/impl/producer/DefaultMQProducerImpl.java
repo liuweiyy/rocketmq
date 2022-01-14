@@ -190,16 +190,20 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     public void start(final boolean startFactory) throws MQClientException {
         switch (this.serviceState) {
             case CREATE_JUST:
+                // 标记初始化失败，这个技巧不错。
                 this.serviceState = ServiceState.START_FAILED;
 
                 this.checkConfig();
 
                 if (!this.defaultMQProducer.getProducerGroup().equals(MixAll.CLIENT_INNER_PRODUCER_GROUP)) {
+                    // 把instance的名字变成进程id
                     this.defaultMQProducer.changeInstanceNameToPID();
                 }
 
+                // 获取MQClient 对象
                 this.mQClientFactory = MQClientManager.getInstance().getOrCreateMQClientInstance(this.defaultMQProducer, rpcHook);
 
+                // 注册Producer
                 boolean registerOK = mQClientFactory.registerProducer(this.defaultMQProducer.getProducerGroup(), this);
                 if (!registerOK) {
                     this.serviceState = ServiceState.CREATE_JUST;
@@ -208,14 +212,17 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                         null);
                 }
 
+                // 把 MixAll.DEFAULT_TOPIC 放入其中
                 this.topicPublishInfoTable.put(this.defaultMQProducer.getCreateTopicKey(), new TopicPublishInfo());
 
                 if (startFactory) {
+                    // 启动MQClient对象
                     mQClientFactory.start();
                 }
 
                 log.info("the producer [{}] start OK. sendMessageWithVIPChannel={}", this.defaultMQProducer.getProducerGroup(),
                     this.defaultMQProducer.isSendMessageWithVIPChannel());
+                // 标记初始化成功
                 this.serviceState = ServiceState.RUNNING;
                 break;
             case RUNNING:
@@ -552,6 +559,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
     }
 
     public void updateFaultItem(final String brokerName, final long currentLatency, boolean isolation) {
+        // currentLatency:一次发送耗费的时间
         this.mqFaultStrategy.updateFaultItem(brokerName, currentLatency, isolation);
     }
 
@@ -595,7 +603,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
         long beginTimestampFirst = System.currentTimeMillis();
         long beginTimestampPrev = beginTimestampFirst;
         long endTimestamp = beginTimestampFirst;
-        // 获取 Topic路由信息
+        // 获取Topic路由信息
         TopicPublishInfo topicPublishInfo = this.tryToFindTopicPublishInfo(msg.getTopic());
         if (topicPublishInfo != null && topicPublishInfo.ok()) {
             boolean callTimeout = false;
@@ -612,6 +620,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
             for (; times < timesTotal; times++) {
                 // 上一次的BrokerName
                 String lastBrokerName = null == mq ? null : mq.getBrokerName();
+                // 队列负载
                 // 选择消息要发送到的队列,默认策略下,按顺序轮流发送,当一次发送失败时,按顺序选择下一个Broker的MessageQueue
                 // 消息重试的重点是MessageQueue的选择
                 MessageQueue mqSelected = this.selectOneMessageQueue(topicPublishInfo, lastBrokerName);
@@ -857,6 +866,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
                 requestHeader.setReconsumeTimes(0);
                 requestHeader.setUnitMode(this.isUnitMode());
                 requestHeader.setBatch(msg instanceof MessageBatch);
+                // 重试相关
                 if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
                     String reconsumeTimes = MessageAccessor.getReconsumeTime(msg);
                     if (reconsumeTimes != null) {
@@ -1391,6 +1401,7 @@ public class DefaultMQProducerImpl implements MQProducerInner {
      */
     public SendResult send(
         Message msg) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+        // 默认3s超时
         return send(msg, this.defaultMQProducer.getSendMsgTimeout());
     }
 
