@@ -349,6 +349,7 @@ public class ScheduleMessageService extends ConfigManager {
                             // 时间超过了，需要立即被调度
                             if (countdown <= 0) {
                                 // 2号消息（对1号消息做了部分修改）
+                                // sendback的message
                                 MessageExt msgExt =
                                     ScheduleMessageService.this.defaultMessageStore.lookMessageByOffset(
                                         offsetPy, sizePy);
@@ -465,8 +466,9 @@ public class ScheduleMessageService extends ConfigManager {
             msgInner.setReconsumeTimes(msgExt.getReconsumeTimes());
 
             msgInner.setWaitStoreMsgOK(false);
+            // delay的信息擦干净
             MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_DELAY_TIME_LEVEL);
-
+            // 重试：还原topic 其实是retryTopic
             msgInner.setTopic(msgInner.getProperty(MessageConst.PROPERTY_REAL_TOPIC));
 
             String queueIdStr = msgInner.getProperty(MessageConst.PROPERTY_REAL_QUEUE_ID);

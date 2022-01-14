@@ -596,6 +596,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
 
                 this.checkConfig();
 
+                // Rebalance负载均衡 复制订阅数据 copy一份重试topic
                 this.copySubscription();
 
                 if (this.defaultMQPushConsumer.getMessageModel() == MessageModel.CLUSTERING) {
@@ -614,6 +615,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                     this.defaultMQPushConsumer.getConsumerGroup(), isUnitMode());
                 this.pullAPIWrapper.registerFilterMessageHook(filterMessageHookList);
 
+                //生成消费进度处理器,集群模式下消费进度保存在Broker上，因为同一组内的消费者要共享进度;广播模式下进度保存在消费者端
                 if (this.defaultMQPushConsumer.getOffsetStore() != null) {
                     this.offsetStore = this.defaultMQPushConsumer.getOffsetStore();
                 } else {
@@ -629,6 +631,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                     }
                     this.defaultMQPushConsumer.setOffsetStore(this.offsetStore);
                 }
+                //若是广播模式,加载本地的消费进度文件
                 this.offsetStore.load();
 
                 if (this.getMessageListenerInner() instanceof MessageListenerOrderly) {
@@ -667,9 +670,12 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 break;
         }
 
+        // 从Namesrv获取TopicRouteData,更新TopicPublishInfo和MessageQueue   （在Consumer start时马上调用，之后每隔一段时间调用一次）
         this.updateTopicSubscribeInfoWhenSubscriptionChanged();
         this.mQClientFactory.checkClientInBroker();
+        // 向TopicRouteData里的所有Broker发送心跳,注册Consumer/Producer信息到Broker上   （在Consumer start时马上调用，之后每隔一段时间调用一次）
         this.mQClientFactory.sendHeartbeatToAllBrokerWithLock();
+        // 唤醒MessageQueue均衡服务,负载均衡后马上开启第一次拉取消息
         this.mQClientFactory.rebalanceImmediately();
     }
 
@@ -843,6 +849,13 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         }
     }
 
+
+    /**
+     * 复制订阅关系
+     * important！！！当集群消费时，加入当前消费分组重试消息的订阅
+     *
+     * @throws MQClientException 当解析订阅数据失败时
+     */
     private void copySubscription() throws MQClientException {
         try {
             Map<String, String> sub = this.defaultMQPushConsumer.getSubscription();
@@ -863,6 +876,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
                 case BROADCASTING:
                     break;
                 case CLUSTERING:
+                    // 重试Topic：%RETRY% + consumerGroup
                     final String retryTopic = MixAll.getRetryTopic(this.defaultMQPushConsumer.getConsumerGroup());
                     SubscriptionData subscriptionData = FilterAPI.buildSubscriptionData(retryTopic, SubscriptionData.SUB_ALL);
                     this.rebalanceImpl.getSubscriptionInner().put(retryTopic, subscriptionData);

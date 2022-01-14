@@ -375,6 +375,7 @@ public class CommitLog {
                         if (delayLevel > 0) {
                             // 当是延时消息时，ConsumeQueue里的tagsCode存储延迟投递时间
                             // tagsCode存放：当前时间+延时等级对应时间
+                            // 替换tagsCode为时间
                             tagsCode = this.defaultMessageStore.getScheduleMessageService().computeDeliverTimestamp(delayLevel,
                                 storeTimestamp);
                         }
@@ -611,12 +612,14 @@ public class CommitLog {
                 || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
             // Delay Delivery
             // 延时队列的替换
+            // 重试，其实就是利用了延时队列
             if (msg.getDelayTimeLevel() > 0) {
                 if (msg.getDelayTimeLevel() > this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {
                     msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());
                 }
                 // 延时消息替换topic和queueId
                 // 存储消息时，延时消息进入 `Topic` 为 `SCHEDULE_TOPIC_XXXX` 。
+                // 重试的2号message的topic替换
                 topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;
                 // 消息队列编号与延迟级别做固定映射 queueId = delayLevel - 1
                 queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());
