@@ -118,15 +118,19 @@ public class IndexFile {
                     timeDiff = 0;
                 }
 
+                // 计算索引数据需要放在哪个位置
                 int absIndexPos =
                     IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
                         + this.indexHeader.getIndexCount() * indexSize;
-
+                // 根据topic-Keys或者topic-UniqueKey计算哈希值
                 this.mappedByteBuffer.putInt(absIndexPos, keyHash);
+                // message在commitLog的物理位置
                 this.mappedByteBuffer.putLong(absIndexPos + 4, phyOffset);
+                // 落地的时间 - 当前索引文件的起始时间
                 this.mappedByteBuffer.putInt(absIndexPos + 4 + 8, (int) timeDiff);
+                // 在索引数据域要把刚刚有冲突的哈希桶的位置记录下来，这样就构建成了一个LinkList
                 this.mappedByteBuffer.putInt(absIndexPos + 4 + 8 + 4, slotValue);
-
+                // 更新哈希桶的索引位置，如果有冲突，刚刚已经记录下来了
                 this.mappedByteBuffer.putInt(absSlotPos, this.indexHeader.getIndexCount());
 
                 if (this.indexHeader.getIndexCount() <= 1) {

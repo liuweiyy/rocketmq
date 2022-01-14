@@ -199,12 +199,14 @@ public class IndexService {
     }
 
     public void buildIndex(DispatchRequest req) {
+        // IndexFile对应一个MappedFile
         IndexFile indexFile = retryGetAndCreateIndexFile();
         if (indexFile != null) {
             long endPhyOffset = indexFile.getEndPhyOffset();
             DispatchRequest msg = req;
             String topic = msg.getTopic();
             String keys = msg.getKeys();
+            // 已经构建过索引了
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
