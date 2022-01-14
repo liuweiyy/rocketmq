@@ -1186,6 +1186,7 @@ public class DefaultMQPushConsumerImpl implements MQConsumerInner {
         for (MessageExt msg : msgs) {
             String retryTopic = msg.getProperty(MessageConst.PROPERTY_RETRY_TOPIC);
             if (retryTopic != null && groupTopic.equals(msg.getTopic())) {
+                // 恢复原始1号message的topic
                 msg.setTopic(retryTopic);
             }
 

@@ -138,7 +138,7 @@ public class ConsumeMessageConcurrentlyService implements ConsumeMessageService 
         mq.setQueueId(msg.getQueueId());
 
         ConsumeConcurrentlyContext context = new ConsumeConcurrentlyContext(mq);
-
+        // 消费消息的时候需要恢复原始的一号消息的topic
         this.defaultMQPushConsumerImpl.resetRetryAndNamespace(msgs, this.consumerGroup);
 
         final long beginTime = System.currentTimeMillis();
