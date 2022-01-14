@@ -36,7 +36,7 @@ public class FilterAPI {
         return simple;
     }
 
-    public static SubscriptionData buildSubscriptionData(String topic, String subString) throws Exception {
+    public static SubscriptionData buildSubscriptionData(String topic, String subString /** tag */) throws Exception {
         SubscriptionData subscriptionData = new SubscriptionData();
         subscriptionData.setTopic(topic);
         subscriptionData.setSubString(subString);
@@ -44,14 +44,14 @@ public class FilterAPI {
         if (null == subString || subString.equals(SubscriptionData.SUB_ALL) || subString.length() == 0) {
             subscriptionData.setSubString(SubscriptionData.SUB_ALL);
         } else {
-            String[] tags = subString.split("\\|\\|");
+            String[] tags = subString.split("\\|\\|"); // tag 用 ||进行隔离
             if (tags.length > 0) {
                 for (String tag : tags) {
                     if (tag.length() > 0) {
                         String trimString = tag.trim();
                         if (trimString.length() > 0) {
-                            subscriptionData.getTagsSet().add(trimString);
-                            subscriptionData.getCodeSet().add(trimString.hashCode());
+                            subscriptionData.getTagsSet().add(trimString); // tag string
+                            subscriptionData.getCodeSet().add(trimString.hashCode());// tag 的哈希值
                         }
                     }
                 }
