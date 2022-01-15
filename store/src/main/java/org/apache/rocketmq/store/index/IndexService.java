@@ -200,13 +200,14 @@ public class IndexService {
 
     public void buildIndex(DispatchRequest req) {
         // IndexFile对应一个MappedFile
+        // 创建或获取当前写入的IndexFile.
         IndexFile indexFile = retryGetAndCreateIndexFile();
         if (indexFile != null) {
             long endPhyOffset = indexFile.getEndPhyOffset();
             DispatchRequest msg = req;
             String topic = msg.getTopic();
             String keys = msg.getKeys();
-            // 已经构建过索引了
+            // 已经构建过索引了 如果 indexfile 中的最大偏移量大于该消息的 commitlog offset，忽略本次构建
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
@@ -221,6 +222,7 @@ public class IndexService {
                     return;
             }
 
+            // uniqKey：消息唯一键，与消息ID不一样，为什么呢？因为消息ID在 commitlog 文件中并不是唯一的，消息消费重试时，发送的消息的消息ID与原先的一样。
             if (req.getUniqKey() != null) {
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {
@@ -251,6 +253,7 @@ public class IndexService {
         for (boolean ok = indexFile.putKey(idxKey, msg.getCommitLogOffset(), msg.getStoreTimestamp()); !ok; ) {
             log.warn("Index file [" + indexFile.getFileName() + "] is full, trying to create another one");
 
+            // 创建或获取当前写入的IndexFile.
             indexFile = retryGetAndCreateIndexFile();
             if (null == indexFile) {
                 return null;

@@ -38,6 +38,7 @@ public class ConsumeQueue {
     private final int queueId;
     private final ByteBuffer byteBufferIndex;
 
+    // 默认路径为：rocketmq_home/store/consume/ {topic} / {queryId},默认大小为，30W条记录，也就是30W * 20字节。
     private final String storePath;
     private final int mappedFileSize;
     private long maxPhysicOffset = -1;
@@ -378,6 +379,7 @@ public class ConsumeQueue {
 
     public void putMessagePositionInfoWrapper(DispatchRequest request) {
         final int maxRetries = 30;
+        // 判断 ConsumeQueue 是否可写
         boolean canWrite = this.defaultMessageStore.getRunningFlags().isCQWriteable();
         for (int i = 0; i < maxRetries && canWrite; i++) {
             long tagsCode = request.getTagsCode();
@@ -395,6 +397,7 @@ public class ConsumeQueue {
                         topic, queueId, request.getCommitLogOffset());
                 }
             }
+            // 写入 consumeQueue文件
             boolean result = this.putMessagePositionInfo(request.getCommitLogOffset(),
                 request.getMsgSize(), tagsCode, request.getConsumeQueueOffset());
             if (result) {
@@ -442,6 +445,7 @@ public class ConsumeQueue {
         if (mappedFile != null) {
 
             if (mappedFile.isFirstCreateInQueue() && cqOffset != 0 && mappedFile.getWrotePosition() == 0) {
+                // 如果文件是新建的，需要先填充空格。
                 this.minLogicOffset = expectLogicOffset;
                 this.mappedFileQueue.setFlushedWhere(expectLogicOffset);
                 this.mappedFileQueue.setCommittedWhere(expectLogicOffset);
@@ -471,6 +475,7 @@ public class ConsumeQueue {
                 }
             }
             this.maxPhysicOffset = offset + size;
+            // 写入到 ConsumeQueue 文件中，整个过程都是基于 MappedFile 来操作的
             return mappedFile.appendMessage(this.byteBufferIndex.array());
         }
         return false;

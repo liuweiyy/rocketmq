@@ -1988,6 +1988,7 @@ public class DefaultMessageStore implements MessageStore {
                 // 主要是构建ConsumerQueue和Index
                 // reputFromOffset：构建ConsumerQueue和Index的进度
                 // result存储的是已经刷过盘的CommitLog的进度-reputFromOffset，就是可以构建ConsumerQueue/Index的message
+                // 根据 offset 从 commitlog 找到一条消息，如果找不到，退出此次循环，doReput方法跳出
                 SelectMappedBufferResult result = DefaultMessageStore.this.commitLog.getData(reputFromOffset);
                 if (result != null) {
                     try {

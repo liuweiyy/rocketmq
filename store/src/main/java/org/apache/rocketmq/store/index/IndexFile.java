@@ -29,14 +29,23 @@ import org.apache.rocketmq.store.MappedFile;
 
 public class IndexFile {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
+    // 每个 hash  槽所占的字节数
     private static int hashSlotSize = 4;
+    // 每条indexFile条目占用字节数
     private static int indexSize = 20;
+    // 用来验证是否是一个有效的索引。
     private static int invalidIndex = 0;
+    // index 文件中 hash 槽的总个数
     private final int hashSlotNum;
+    // indexFile中包含的条目数
     private final int indexNum;
+    // 对应的映射文件
     private final MappedFile mappedFile;
+    // 对应的文件通道
     private final FileChannel fileChannel;
+    // 对应 PageCache
     private final MappedByteBuffer mappedByteBuffer;
+    // IndexHeader,每一个indexfile的头部信息
     private final IndexHeader indexHeader;
 
     public IndexFile(final String fileName, final int hashSlotNum, final int indexNum,
@@ -89,18 +98,28 @@ public class IndexFile {
         return this.mappedFile.destroy(intervalForcibly);
     }
 
+    /**
+     *
+     * @param key
+     * @param phyOffset 消息存储在commitlog的偏移量
+     * @param storeTimestamp 消息存入commitlog的时间戳
+     * @return
+     */
     public boolean putKey(final String key, final long phyOffset, final long storeTimestamp) {
+        // 如果目前 index file 存储的条目数小于允许的条目数，则存入当前文件中，如果超出，则返回 false, 表示存入失败，
+        // IndexService 中有重试机制，默认重试3次
         if (this.indexHeader.getIndexCount() < this.indexNum) {
             int keyHash = indexKeyHashMethod(key);
+            // 先获取 key 的 hashcode，然后用 hashcode 和 hashSlotNum 取模，得到该 key 所在的 hashslot 下标，hashSlotNum默认500万个。
             int slotPos = keyHash % this.hashSlotNum;
+            // 根据 key 所算出来的 hashslot 的下标计算出绝对位置，从这里可以看出端倪：
+            // IndexFile的文件布局：文件头(IndexFileHeader 40个字节) + (hashSlotNum * 4)
             int absSlotPos = IndexHeader.INDEX_HEADER_SIZE + slotPos * hashSlotSize;
 
             FileLock fileLock = null;
 
             try {
-
-                // fileLock = this.fileChannel.lock(absSlotPos, hashSlotSize,
-                // false);
+                // 读取 key 所在 hashslot 下标处的值(4个字节)，如果小于0或超过当前包含的 indexCount，则设置为0。
                 int slotValue = this.mappedByteBuffer.getInt(absSlotPos);
                 if (slotValue <= invalidIndex || slotValue > this.indexHeader.getIndexCount()) {
                     slotValue = invalidIndex;
@@ -116,13 +135,15 @@ public class IndexFile {
                     timeDiff = Integer.MAX_VALUE;
                 } else if (timeDiff < 0) {
                     timeDiff = 0;
-                }
+                }// 计算消息的存储时间与当前 IndexFile 存放的最小时间差额(单位为秒）
 
                 // 计算索引数据需要放在哪个位置
+                // 计算该 key 存放的条目的起始位置，等于=文件头(IndexFileHeader 40个字节) + (hashSlotNum * 4) + IndexSize(一个条目20个字节) * 当前存放的条目数量。
                 int absIndexPos =
                     IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
                         + this.indexHeader.getIndexCount() * indexSize;
                 // 根据topic-Keys或者topic-UniqueKey计算哈希值
+                // 填充 IndexFile 条目，4字节（hashcode） + 8字节（commitlog offset） + 4字节（commitlog存储时间与indexfile第一个条目的时间差，单位秒） + 4字节（同hashcode的上一个的位置，0表示没有上一个）。
                 this.mappedByteBuffer.putInt(absIndexPos, keyHash);
                 // message在commitLog的物理位置
                 this.mappedByteBuffer.putLong(absIndexPos + 4, phyOffset);
@@ -131,8 +152,9 @@ public class IndexFile {
                 // 在索引数据域要把刚刚有冲突的哈希桶的位置记录下来，这样就构建成了一个LinkList
                 this.mappedByteBuffer.putInt(absIndexPos + 4 + 8 + 4, slotValue);
                 // 更新哈希桶的索引位置，如果有冲突，刚刚已经记录下来了
+                // 将当前先添加的条目的位置，存入到 key hashcode 对应的 hash槽，也就是该字段里面存放的是该 hashcode 最新的条目
                 this.mappedByteBuffer.putInt(absSlotPos, this.indexHeader.getIndexCount());
-
+                // 更新IndexFile头部相关字段，比如最小时间，当前最大时间等。
                 if (this.indexHeader.getIndexCount() <= 1) {
                     this.indexHeader.setBeginPhyOffset(phyOffset);
                     this.indexHeader.setBeginTimestamp(storeTimestamp);
@@ -192,6 +214,11 @@ public class IndexFile {
         return result;
     }
 
+    /**
+     * 上述设计，可以支持 hashcode 冲突，，多个不同的key,相同的 hashcode,index 条目其实是一个逻辑链表的概念，因为每个index 条目的最后4个字节存放的就是上一个的位置。
+     * 知道存了储结构，要检索 index文件就变的简单起来来，其实就根据 key 得到 hashcode,然后从最新的条目开始找，匹配时间戳是否有效，
+     * 得到消息的物理地址（存放在commitlog文件中），然后就可以根据 commitlog 偏移量找到具体的消息，从而得到最终的key-value。
+     */
     public void selectPhyOffset(final List<Long> phyOffsets, final String key, final int maxNum,
         final long begin, final long end, boolean lock) {
         if (this.mappedFile.hold()) {
