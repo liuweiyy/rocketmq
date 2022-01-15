@@ -208,7 +208,10 @@ public class MappedFile extends ReferenceResource {
 
         if (currentPos < this.fileSize) {
             // 这个buffer和同步/异步刷盘相关，可供选择
+            // writeBuffer/moppedByteBuffer的position始终为0，而limit则始终等于capacity。
+            // slice是根据position和limit来生成byteBuffer。
             ByteBuffer byteBuffer = writeBuffer != null ? writeBuffer.slice() : this.mappedByteBuffer.slice();
+            // 设置写的起始位置
             byteBuffer.position(currentPos);
             AppendMessageResult result;
             if (messageExt instanceof MessageExtBrokerInner) {
@@ -489,6 +492,16 @@ public class MappedFile extends ReferenceResource {
         this.committedPosition.set(pos);
     }
 
+    /**
+     * 对当前映射文件进行预热
+     * <p>
+     * 具体的，先对当前映射文件的每个内存页写入一个字节0，当刷盘策略为同步刷盘时，执行强制刷盘，并且是每修改pages个分页刷一次盘。
+     * 然后将当前映射文件全部的地址空间锁定在物理存储中，防止其被交换到swap空间。
+     * 再调用madvise，传入、WILL_NEED策略，将刚刚锁住的内存预热，其实就是告诉内核，我马上就要用(WTLl_NEED)这块内存，先做虚拟内存到物理内存的映射.
+     * </p>
+     * @param type 刷盘策略
+     * @param pages 预热时一次刷盘的分页数
+     */
     public void warmMappedFile(FlushDiskType type, int pages) {
         long beginTime = System.currentTimeMillis();
         ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
@@ -497,6 +510,8 @@ public class MappedFile extends ReferenceResource {
         for (int i = 0, j = 0; i < this.fileSize; i += MappedFile.OS_PAGE_SIZE, j++) {
             byteBuffer.put(i, (byte) 0);
             // force flush when flush disk type is sync
+            // 当刷盘策略为同步刷盘时，执行强制刷盘
+            // 每修改pages个分页刷一次盘
             if (type == FlushDiskType.SYNC_FLUSH) {
                 if ((i / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE) >= pages) {
                     flush = i;
@@ -552,16 +567,22 @@ public class MappedFile extends ReferenceResource {
         this.firstCreateInQueue = firstCreateInQueue;
     }
 
+    /**
+     *  将当前映射文件全部的地址空间锁定在物理存储中,防止其被交换到swap空间。
+     * 再调用madvise,传入WILL_NEED 策略，将刚刚锁住的内存预热，其实就是告诉内核，我马上就要用(WILL_NEED) 这块内存,先做虚拟内存到物理内存的映射
+     */
     public void mlock() {
         final long beginTime = System.currentTimeMillis();
         final long address = ((DirectBuffer) (this.mappedByteBuffer)).address();
         Pointer pointer = new Pointer(address);
         {
+            // 将当前映射文件全部的地址空间锁定在物理存储中，防止被交换到swap空间
             int ret = LibC.INSTANCE.mlock(pointer, new NativeLong(this.fileSize));
             log.info("mlock {} {} {} ret = {} time consuming = {}", address, this.fileName, this.fileSize, ret, System.currentTimeMillis() - beginTime);
         }
 
         {
+            // 实现是一次性先将一段数据读入到映射内存区域，这样就减少了缺页异常的产生。
             int ret = LibC.INSTANCE.madvise(pointer, new NativeLong(this.fileSize), LibC.MADV_WILLNEED);
             log.info("madvise {} {} {} ret = {} time consuming = {}", address, this.fileName, this.fileSize, ret, System.currentTimeMillis() - beginTime);
         }

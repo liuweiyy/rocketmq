@@ -690,12 +690,16 @@ public class CommitLog {
                 mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise
             }
             if (null == mappedFile) {
+                // 创建映射文件失败
                 log.error("create mapped file1 error, topic: " + msg.getTopic() + " clientAddr: " + msg.getBornHostString());
+                //消息写入完成后，先将beginTimeInLock设置为0,然后释放锁。
+                //该值用来计算消息写入耗时。写入新消息前，会根据该值来检查操作系统内存页写入是否繁忙，
                 beginTimeInLock = 0;
                 return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null));
             }
 
             // 把broker内部的message刷新到mappedFile的内存，还没有刷盘
+            // 注意，只是将消息写入映射文件中的writeBuffer/mappedByteBuffer,还没有刷盘
             result = mappedFile.appendMessage(msg, this.appendMessageCallback, putMessageContext);
             switch (result.getStatus()) {
                 case PUT_OK:
@@ -1321,6 +1325,13 @@ public class CommitLog {
             this.maxMessageSize = size;
         }
 
+        /**
+         * 追加单条消息
+         *  @param fileFromOffset   commitlog文件起始偏移量。其实就是文件名称，一般为20位数字,代表这个文件开始时的offset
+         *  @param byteBuffer       写消息缓冲区(MappedFile#writeBuffer or MoppedFiler#mappedByteBuffer)
+         *  @param maxBlank         写消息缓冲区剩余可用空间大小
+         *  @param msgInner         消息
+         */
         public AppendMessageResult doAppend(final long fileFromOffset, final ByteBuffer byteBuffer, final int maxBlank,
             final MessageExtBrokerInner msgInner, PutMessageContext putMessageContext) {
             // STORETIMESTAMP + STOREHOSTADDRESS + OFFSET <br>

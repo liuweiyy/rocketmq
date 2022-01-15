@@ -146,6 +146,11 @@ public class MappedFileQueue {
     }
 
 
+    /**
+     * 对MappedFileQueue中的moppedFiles进行初始化,
+     * <p>
+     * 方法首先会根据文件名称对commitlog文件进行升序排序，然后丢弃大小不为mappedFileSize的文件及其后续文件。
+     */
     public boolean load() {
         File dir = new File(this.storePath);
         File[] ls = dir.listFiles();
@@ -198,6 +203,7 @@ public class MappedFileQueue {
     }
 
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
+        // 当前要创建的映射文件对应的commitlog的起始偏移量
         long createOffset = -1;
         MappedFile mappedFileLast = getLastMappedFile();
 
@@ -208,7 +214,7 @@ public class MappedFileQueue {
         if (mappedFileLast != null && mappedFileLast.isFull()) {
             createOffset = mappedFileLast.getFileFromOffset() + this.mappedFileSize;
         }
-
+        // 创建新的映射文件
         if (createOffset != -1 && needCreate) {
             return tryCreateMappedFile(createOffset);
         }
@@ -217,6 +223,8 @@ public class MappedFileQueue {
     }
 
     protected MappedFile tryCreateMappedFile(long createOffset) {
+        // 一次创建两个映射文件
+        // 构建commitlog的文件名称
         String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);
         String nextNextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset
                 + this.mappedFileSize);
@@ -226,6 +234,8 @@ public class MappedFileQueue {
     protected MappedFile doCreateMappedFile(String nextFilePath, String nextNextFilePath) {
         MappedFile mappedFile = null;
 
+        // 优先通过allocateMappedFileService创建映射文件，因为是预分配方式，性能很高。
+        // 如果上述方式分配失败，再通过new创建映射文件。
         if (this.allocateMappedFileService != null) {
             mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
@@ -247,10 +257,16 @@ public class MappedFileQueue {
         return mappedFile;
     }
 
+    /**
+     * 获取最后一个MappedFile,如果其为null或者已写满，则会创建新的MappedFile
+     */
     public MappedFile getLastMappedFile(final long startOffset) {
         return getLastMappedFile(startOffset, true);
     }
 
+    /**
+     * 获取最后一个MappedFile
+     */
     public MappedFile getLastMappedFile() {
         MappedFile mappedFileLast = null;
 
