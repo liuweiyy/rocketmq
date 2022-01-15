@@ -42,11 +42,13 @@ public abstract class ReferenceResource {
 
     public void shutdown(final long intervalForcibly) {
         if (this.available) {
+            // 第一次删除的时候，如何文件正在被读，则暂缓删除
             this.available = false;
             this.firstShutdownTimestamp = System.currentTimeMillis();
             this.release();
         } else if (this.getRefCount() > 0) {
             if ((System.currentTimeMillis() - this.firstShutdownTimestamp) >= intervalForcibly) {
+                // 超过intervalForcibly这个时间后，还在被读，则会触发强制删除
                 this.refCount.set(-1000 - this.getRefCount());
                 this.release();
             }

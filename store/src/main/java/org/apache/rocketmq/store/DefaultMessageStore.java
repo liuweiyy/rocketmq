@@ -1641,8 +1641,11 @@ public class DefaultMessageStore implements MessageStore {
 
         public void run() {
             try {
+                // 删除过期的文件
                 this.deleteExpiredFiles();
 
+                // 如果待删除的正在被读取，第一次和后面一段时间会被拒绝删除
+                // 一段时间之后，文件将被强制删除
                 this.redeleteHangedFile();
             } catch (Throwable e) {
                 DefaultMessageStore.log.warn(this.getServiceName() + " service has exception. ", e);
@@ -1655,7 +1658,9 @@ public class DefaultMessageStore implements MessageStore {
             int deletePhysicFilesInterval = DefaultMessageStore.this.getMessageStoreConfig().getDeleteCommitLogFilesInterval();
             int destroyMapedFileIntervalForcibly = DefaultMessageStore.this.getMessageStoreConfig().getDestroyMapedFileIntervalForcibly();
 
+            // 是否是删除过期文件时间
             boolean timeup = this.isTimeToDelete();
+            // 剩余磁盘空间是否足够
             boolean spacefull = this.isSpaceToDelete();
             boolean manualDelete = this.manualDeleteFileSeveralTimes > 0;
 
@@ -1722,6 +1727,7 @@ public class DefaultMessageStore implements MessageStore {
                 double minPhysicRatio = 100;
                 String minStorePath = null;
                 for (String storePathPhysic : storePaths) {
+                    // 当前CommitLog目前所在的磁盘分区的磁盘使用率
                     double physicRatio = UtilAll.getDiskPartitionSpaceUsedPercent(storePathPhysic);
                     if (minPhysicRatio > physicRatio) {
                         minPhysicRatio =  physicRatio;
@@ -1733,16 +1739,19 @@ public class DefaultMessageStore implements MessageStore {
                 }
                 DefaultMessageStore.this.commitLog.setFullStorePaths(fullStorePath);
                 if (minPhysicRatio > diskSpaceWarningLevelRatio) {
+                    // 设置磁盘不可写，会拒绝新消息的写入
                     boolean diskok = DefaultMessageStore.this.runningFlags.getAndMakeDiskFull();
                     if (diskok) {
                         DefaultMessageStore.log.error("physic disk maybe full soon " + minPhysicRatio +
                                 ", so mark disk full, storePathPhysic=" + minStorePath);
                     }
-
+                    // 触发立即删除文件
                     cleanImmediately = true;
                 } else if (minPhysicRatio > diskSpaceCleanForciblyRatio) {
+                    // 触发立即删除文件，但是不会拒绝新消息的写入
                     cleanImmediately = true;
                 } else {
+                    // 清楚标记，确保新消息可以写入
                     boolean diskok = DefaultMessageStore.this.runningFlags.getAndMakeDiskOK();
                     if (!diskok) {
                         DefaultMessageStore.log.info("physic disk space OK " + minPhysicRatio +

@@ -351,6 +351,11 @@ public class MappedFileQueue {
         final int deleteFilesInterval,
         final long intervalForcibly,
         final boolean cleanImmediately) {
+        //expiredTime:配置的过期时间
+        //deleteFilesInterval:删除物理文件的问隔，可能需要删除的时间不只一个， 指两次删除文件的问隔时间
+        //intervalForcibly:在读取消息时，强制延时删除的时间
+        //cleanImmediately:是否立即删除
+
         Object[] mfs = this.copyMappedFiles(0);
 
         if (null == mfs)
