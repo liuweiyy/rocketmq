@@ -154,6 +154,16 @@ public class IndexService {
         }
     }
 
+    /**
+     * 根据条件查询消息的PhyOffset
+     *
+     * @param topic
+     * @param key
+     * @param maxNum 总共查多少条消息
+     * @param begin  消息存储起始时间
+     * @param end    消息存储结束时间
+     * @return
+     */
     public QueryOffsetResult queryOffset(String topic, String key, int maxNum, long begin, long end) {
         List<Long> phyOffsets = new ArrayList<Long>(maxNum);
 
@@ -163,6 +173,7 @@ public class IndexService {
         try {
             this.readWriteLock.readLock().lock();
             if (!this.indexFileList.isEmpty()) {
+                // 按消息的存入顺序倒序查询,越后面的越新
                 for (int i = this.indexFileList.size(); i > 0; i--) {
                     IndexFile f = this.indexFileList.get(i - 1);
                     boolean lastFile = i == this.indexFileList.size();
@@ -171,11 +182,13 @@ public class IndexService {
                         indexLastUpdatePhyoffset = f.getEndPhyOffset();
                     }
 
+                    // 索引文件的起始和终止时间与给定的时间有交集
                     if (f.isTimeMatched(begin, end)) {
 
                         f.selectPhyOffset(phyOffsets, buildKey(topic, key), maxNum, begin, end, lastFile);
                     }
 
+                    // 这个索引文件之前(倒序)的消息的存储时间都在查询时间区间之前了
                     if (f.getBeginTimestamp() < begin) {
                         break;
                     }
@@ -198,6 +211,10 @@ public class IndexService {
         return topic + "#" + key;
     }
 
+    /**
+     * 只有在消息中指定了keys或者uniqueKey,才会构建索引
+     * {@linkplain MessageSysFlag#TRANSACTION_ROLLBACK_TYPE}类型消息不会构建索引
+     */
     public void buildIndex(DispatchRequest req) {
         // IndexFile对应一个MappedFile
         // 创建或获取当前写入的IndexFile.
@@ -222,6 +239,7 @@ public class IndexService {
                     return;
             }
 
+            // 若消息体中指定了uniqueKey属性(Producer创建时Client都会生成)
             // uniqKey：消息唯一键，与消息ID不一样，为什么呢？因为消息ID在 commitlog 文件中并不是唯一的，消息消费重试时，发送的消息的消息ID与原先的一样。
             if (req.getUniqKey() != null) {
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
@@ -231,6 +249,7 @@ public class IndexService {
                 }
             }
 
+            //若消息中未指定keys及uniqueKey,则不会构建索引
             if (keys != null && keys.length() > 0) {
                 String[] keyset = keys.split(MessageConst.KEY_SEPARATOR);
                 for (int i = 0; i < keyset.length; i++) {
@@ -318,6 +337,7 @@ public class IndexService {
 
         if (indexFile == null) {
             try {
+                // 创建IndexFile,5百万个索引哈希插槽,2千万个索引数量,上个索引文件的CommitLog的Offset及最后更新时间
                 String fileName =
                     this.storePath + File.separator
                         + UtilAll.timeMillisToHumanString(System.currentTimeMillis());

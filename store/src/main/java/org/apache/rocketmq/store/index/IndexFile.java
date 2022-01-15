@@ -27,17 +27,25 @@ import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.store.MappedFile;
 
+/**
+ * 每个IndexFile的大小为420 000 040（40 + 500w * 4 + 2000w * 20)字节,400.5432510376MB
+ * 文件名称为:20180227110750161 时间的格式化形式,精确到毫秒 2018-02-27:11:07:50.161
+ * 文件路径为${storePath}/index/20180227110750161
+ */
 public class IndexFile {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     // 每个 hash  槽所占的字节数
     private static int hashSlotSize = 4;
     // 每条indexFile条目占用字节数
+    // 索引所占字节大小
     private static int indexSize = 20;
     // 用来验证是否是一个有效的索引。
     private static int invalidIndex = 0;
     // index 文件中 hash 槽的总个数
+    // 5百万 构建索引占用的槽位数
     private final int hashSlotNum;
     // indexFile中包含的条目数
+    // 2千万 构建的索引个数
     private final int indexNum;
     // 对应的映射文件
     private final MappedFile mappedFile;
@@ -50,6 +58,7 @@ public class IndexFile {
 
     public IndexFile(final String fileName, final int hashSlotNum, final int indexNum,
         final long endPhyOffset, final long endTimestamp) throws IOException {
+        // 40+5000000*4+5000000*4*20 = 420 000 040  =400.5432510376MB
         int fileTotalSize =
             IndexHeader.INDEX_HEADER_SIZE + (hashSlotNum * hashSlotSize) + (indexNum * indexSize);
         this.mappedFile = new MappedFile(fileName, fileTotalSize);
@@ -120,11 +129,13 @@ public class IndexFile {
 
             try {
                 // 读取 key 所在 hashslot 下标处的值(4个字节)，如果小于0或超过当前包含的 indexCount，则设置为0。
+                // 在插槽位置的值,代表着相同key的最新索引位置
                 int slotValue = this.mappedByteBuffer.getInt(absSlotPos);
                 if (slotValue <= invalidIndex || slotValue > this.indexHeader.getIndexCount()) {
                     slotValue = invalidIndex;
                 }
 
+                // 时间差,消息存储时间 - 索引文件启用时间
                 long timeDiff = storeTimestamp - this.indexHeader.getBeginTimestamp();
 
                 timeDiff = timeDiff / 1000;
@@ -137,24 +148,29 @@ public class IndexFile {
                     timeDiff = 0;
                 }// 计算消息的存储时间与当前 IndexFile 存放的最小时间差额(单位为秒）
 
-                // 计算索引数据需要放在哪个位置
-                // 计算该 key 存放的条目的起始位置，等于=文件头(IndexFileHeader 40个字节) + (hashSlotNum * 4) + IndexSize(一个条目20个字节) * 当前存放的条目数量。
+                // 索引位置 = 40 + 5000000*4 + 已存储索引个数*20, 索引存储时有序
                 int absIndexPos =
                     IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
                         + this.indexHeader.getIndexCount() * indexSize;
+                /**
+                 * keyHash：消息中指定的业务key的hash值
+                 * phyOffset：当前key对应的消息在commitlog中的偏移量commitlog
+                 * offsetTimeDiff：当前key对应消息的存储时间与当前indexFile创建时间的时间差
+                 * preIndexNo：当前slot下当前index索引单元的前一个index索引单元的indexNo
+                 */
                 // 根据topic-Keys或者topic-UniqueKey计算哈希值
                 // 填充 IndexFile 条目，4字节（hashcode） + 8字节（commitlog offset） + 4字节（commitlog存储时间与indexfile第一个条目的时间差，单位秒） + 4字节（同hashcode的上一个的位置，0表示没有上一个）。
-                this.mappedByteBuffer.putInt(absIndexPos, keyHash);
+                this.mappedByteBuffer.putInt(absIndexPos, keyHash);// 4byte
                 // message在commitLog的物理位置
-                this.mappedByteBuffer.putLong(absIndexPos + 4, phyOffset);
+                this.mappedByteBuffer.putLong(absIndexPos + 4, phyOffset);//4byte
                 // 落地的时间 - 当前索引文件的起始时间
-                this.mappedByteBuffer.putInt(absIndexPos + 4 + 8, (int) timeDiff);
+                this.mappedByteBuffer.putInt(absIndexPos + 4 + 8, (int) timeDiff);//8byte
                 // 在索引数据域要把刚刚有冲突的哈希桶的位置记录下来，这样就构建成了一个LinkList
-                this.mappedByteBuffer.putInt(absIndexPos + 4 + 8 + 4, slotValue);
+                this.mappedByteBuffer.putInt(absIndexPos + 4 + 8 + 4, slotValue);//4byte,若不为空,值是上一个相同key的索引顺序位置,这样查询时能够递归的按照此值获取指定key的所有索引信息
                 // 更新哈希桶的索引位置，如果有冲突，刚刚已经记录下来了
                 // 将当前先添加的条目的位置，存入到 key hashcode 对应的 hash槽，也就是该字段里面存放的是该 hashcode 最新的条目
-                this.mappedByteBuffer.putInt(absSlotPos, this.indexHeader.getIndexCount());
-                // 更新IndexFile头部相关字段，比如最小时间，当前最大时间等。
+                this.mappedByteBuffer.putInt(absSlotPos, this.indexHeader.getIndexCount()); //存储插槽 >> 索引序号, 查询是通过插槽找到索引位置,如果key相同,更新插槽的索引位置值
+                // 如果当前索引是IndexFile的第一个索引
                 if (this.indexHeader.getIndexCount() <= 1) {
                     this.indexHeader.setBeginPhyOffset(phyOffset);
                     this.indexHeader.setBeginTimestamp(storeTimestamp);
@@ -163,6 +179,7 @@ public class IndexFile {
                 if (invalidIndex == slotValue) {
                     this.indexHeader.incHashSlotCount();
                 }
+                // 更新IndexHeader的信息
                 this.indexHeader.incIndexCount();
                 this.indexHeader.setEndPhyOffset(phyOffset);
                 this.indexHeader.setEndTimestamp(storeTimestamp);
@@ -207,6 +224,9 @@ public class IndexFile {
         return this.indexHeader.getEndPhyOffset();
     }
 
+    /**
+     * 索引文件的起始和终止时间与给定的时间有交集
+     */
     public boolean isTimeMatched(final long begin, final long end) {
         boolean result = begin < this.indexHeader.getBeginTimestamp() && end > this.indexHeader.getEndTimestamp();
         result = result || (begin >= this.indexHeader.getBeginTimestamp() && begin <= this.indexHeader.getEndTimestamp());
@@ -218,6 +238,9 @@ public class IndexFile {
      * 上述设计，可以支持 hashcode 冲突，，多个不同的key,相同的 hashcode,index 条目其实是一个逻辑链表的概念，因为每个index 条目的最后4个字节存放的就是上一个的位置。
      * 知道存了储结构，要检索 index文件就变的简单起来来，其实就根据 key 得到 hashcode,然后从最新的条目开始找，匹配时间戳是否有效，
      * 得到消息的物理地址（存放在commitlog文件中），然后就可以根据 commitlog 偏移量找到具体的消息，从而得到最终的key-value。
+     *      提取符合key和topic的Message的PhyOffset
+     *      @param key        topic#key
+     *      @param lock       查询最后一个indexFile时锁定,防止阻止其继续创建索引
      */
     public void selectPhyOffset(final List<Long> phyOffsets, final String key, final int maxNum,
         final long begin, final long end, boolean lock) {
@@ -228,16 +251,8 @@ public class IndexFile {
 
             FileLock fileLock = null;
             try {
-                if (lock) {
-                    // fileLock = this.fileChannel.lock(absSlotPos,
-                    // hashSlotSize, true);
-                }
-
+                // index的序号
                 int slotValue = this.mappedByteBuffer.getInt(absSlotPos);
-                // if (fileLock != null) {
-                // fileLock.release();
-                // fileLock = null;
-                // }
 
                 if (slotValue <= invalidIndex || slotValue > this.indexHeader.getIndexCount()
                     || this.indexHeader.getIndexCount() <= 1) {
