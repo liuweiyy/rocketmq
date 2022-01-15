@@ -87,6 +87,12 @@ public class ConsumeQueue {
     }
 
     public void recover() {
+        //从倒数第三个文件开始恢复
+        /*恢复的数据:
+        1. MappedFile(FlushedPosition+CommittedPosition+WrotePosition)
+        2. MappedFileQueue(FlushedWhere. CommittedWhere)
+        3、ConsumeQueue(maxPhysicOffset)
+        */
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
         if (!mappedFiles.isEmpty()) {
 
@@ -97,7 +103,9 @@ public class ConsumeQueue {
             int mappedFileSizeLogics = this.mappedFileSize;
             MappedFile mappedFile = mappedFiles.get(index);
             ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();
+            // 倒数第三个文件的文件名字
             long processOffset = mappedFile.getFileFromOffset();
+            // 在某个MappedFile的相对位置
             long mappedFileOffset = 0;
             long maxExtAddr = 1;
             while (true) {
@@ -113,12 +121,14 @@ public class ConsumeQueue {
                             maxExtAddr = tagsCode;
                         }
                     } else {
+                        // 最后一个文件
                         log.info("recover current consume queue file over,  " + mappedFile.getFileName() + " "
                             + offset + " " + size + " " + tagsCode);
                         break;
                     }
                 }
 
+                // 文件遍历完了
                 if (mappedFileOffset == mappedFileSizeLogics) {
                     index++;
                     if (index >= mappedFiles.size()) {
@@ -127,6 +137,7 @@ public class ConsumeQueue {
                             + mappedFile.getFileName());
                         break;
                     } else {
+                        // 下一个MappedFile
                         mappedFile = mappedFiles.get(index);
                         byteBuffer = mappedFile.sliceByteBuffer();
                         processOffset = mappedFile.getFileFromOffset();

@@ -189,6 +189,14 @@ public class CommitLog {
      * When the normal exit, data recovery, all memory data have been flush
      */
     public void recoverNormally(long maxPhyOffsetOfConsumeQueue) {
+        //broker正常关闭时，Commitlog的恢复
+        //ConsumeQueue落地的消息>= CommitLog落地的消息?
+        //从例数第三个文件开始恢复
+        /*
+        1、MappedFile(FlushedPosition+CommittedPosition +WrotePosition)
+        2. MappedFileQueue (FlushedWhere. CommittedWhere)
+        3.清除ConsumeQueue的脏数据
+        */
         boolean checkCRCOnRecover = this.defaultMessageStore.getMessageStoreConfig().isCheckCRCOnRecover();
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
         if (!mappedFiles.isEmpty()) {
@@ -450,6 +458,16 @@ public class CommitLog {
 
     @Deprecated
     public void recoverAbnormally(long maxPhyOffsetOfConsumeQueue) {
+        //broker异常时。Commitlog的恢复
+        //ConsumeQueue落地的消息>= Commitlog落地的消息或者ConsumeQueue落地的消息< Commitlog落地的消息
+        //最后一个文件尝试开始修复， 第一个消息的落地时间小于StoreCheckpoint记录的时间
+        /*
+        1、MappedFile(FlushedPosition+CommittedPosition +WrotePosition)
+        2. MappedFileQueue(FlushedWhere. CommittedWhere)
+        3、重新构进ConsumeQueue AIndex
+        3.清除ConsumeQueue 的脏数据
+        */
+
         // recover by the minimum time stamp
         boolean checkCRCOnRecover = this.defaultMessageStore.getMessageStoreConfig().isCheckCRCOnRecover();
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
@@ -521,6 +539,8 @@ public class CommitLog {
 
             // Clear ConsumeQueue redundant data
             if (maxPhyOffsetOfConsumeQueue >= processOffset) {
+                // ConsumeQueue落地的数据>=Commitlog落地的数据
+                // 清除ConsumeQueue的脏数据
                 log.warn("maxPhyOffsetOfConsumeQueue({}) >= processOffset({}), truncate dirty logic files", maxPhyOffsetOfConsumeQueue, processOffset);
                 this.defaultMessageStore.truncateDirtyLogicFiles(processOffset);
             }
