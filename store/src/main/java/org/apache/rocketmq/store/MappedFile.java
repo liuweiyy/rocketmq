@@ -287,6 +287,7 @@ public class MappedFile extends ReferenceResource {
                 try {
                     //We only append data to fileChannel or mappedByteBuffer, never both.
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
+                        // 真正刷盘在这
                         this.fileChannel.force(false);
                     } else {
                         this.mappedByteBuffer.force();

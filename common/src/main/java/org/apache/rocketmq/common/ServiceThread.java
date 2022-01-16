@@ -28,6 +28,7 @@ public abstract class ServiceThread implements Runnable {
     private static final long JOIN_TIME = 90 * 1000;
 
     private Thread thread;
+    // 支持reset
     protected final CountDownLatch2 waitPoint = new CountDownLatch2(1);
     protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false);
     protected volatile boolean stopped = false;
@@ -120,14 +121,18 @@ public abstract class ServiceThread implements Runnable {
         log.info("makestop thread " + this.getServiceName());
     }
 
+    // 外部的线程唤醒本线程
     public void wakeup() {
         if (hasNotified.compareAndSet(false, true)) {
+            // 避免多次调用
             waitPoint.countDown(); // notify
         }
     }
 
+    // 在Run函数里控制循环的节奏（支持通过唤醒）
     protected void waitForRunning(long interval) {
         if (hasNotified.compareAndSet(true, false)) {
+            // 已经通知过了，说明有数据可以处理了，提前结束等待
             this.onWaitEnd();
             return;
         }
@@ -140,6 +145,7 @@ public abstract class ServiceThread implements Runnable {
         } catch (InterruptedException e) {
             log.error("Interrupted", e);
         } finally {
+            // 重置通知&等待结束
             hasNotified.set(false);
             this.onWaitEnd();
         }
